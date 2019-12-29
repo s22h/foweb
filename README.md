@@ -44,6 +44,11 @@ var test = foweb.MaybeAuthHandler{
 		// handle POST request only if authenticated
 		if handler.Request.Method == "POST" {
 			foweb.WriteJSON(handler.Response, "Hello POST")
+		} else {
+			foweb.WriteJSONResponse(handler.Response, foweb.JSONResponse{
+				Status:  http.StatusMethodNotAllowed,
+				Message: "Request method not allowed",
+			})
 		}
 	},
 }
