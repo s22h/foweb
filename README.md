@@ -20,7 +20,19 @@ import (
 // APIBaseURL is the base URL of the API endpoint
 const APIBaseURL = "/api/v1"
 
+var users = map[string]string{
+	"user": "test",
+}
+
 func main() {
+	// this is the method that will be called when a user tries to authenticate,
+	// to check if the credentials are valid, this would be querying a database
+	// or users file in a real programme
+	foweb.SigninCallback = func(creds foweb.Credentials) bool {
+		expectedPassword, ok := users[creds.Username]
+		return ok && expectedPassword == creds.Password
+	}
+
 	http.Handle(APIBaseURL+"/test", test)
 	http.Handle("/", http.FileServer(http.Dir("./web/")))
 
