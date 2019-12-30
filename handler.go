@@ -2,6 +2,7 @@ package foweb
 
 import (
 	"net/http"
+	"regexp"
 )
 
 // PlainHandler is the default request handler without auth etc.
@@ -33,8 +34,37 @@ func (handler PlainHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// TODO: check if authenticated
-	if false {
+	header, ok := r.Header["Authorization"]
+
+	if !ok {
+		// header is missing
+		WriteUnauthorized(w)
+		return
+	}
+
+	re, err := regexp.Compile(`(?i:Bearer)\s+(.*)`)
+
+	if err != nil {
+		WriteJSONResponse(w, JSONResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	matches := re.FindStringSubmatch(header[0])
+
+	if matches == nil {
+		WriteJSONResponse(w, JSONResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Malformed authorization header",
+		})
+		return
+	}
+
+	valid, err := ValidateJWT(w, matches[0])
+
+	if err != nil || !valid {
 		WriteUnauthorized(w)
 		return
 	}
@@ -45,8 +75,31 @@ func (handler AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (handler MaybeAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// TODO: check if authenticated
+	header, ok := r.Header["Authorization"]
 	handler.authorized = false
+
+	if ok {
+		re, err := regexp.Compile(`(?i:Bearer)\s+(.*)`)
+
+		if err != nil {
+			WriteJSONResponse(w, JSONResponse{
+				Status:  http.StatusInternalServerError,
+				Message: "Internal server error",
+			})
+			return
+		}
+
+		matches := re.FindStringSubmatch(header[0])
+
+		if matches != nil {
+			valid, err := ValidateJWT(w, matches[1])
+
+			if err == nil && valid {
+				handler.authorized = true
+			}
+		}
+	}
+
 	handler.Response = w
 	handler.Request = r
 	handler.Callback(handler)

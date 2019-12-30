@@ -13,6 +13,7 @@ type JSONResponse struct {
 
 // WriteUnauthorized writes the unauthorized status to the browser
 func WriteUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", "Bearer realm=\"foweb\"")
 	w.WriteHeader(http.StatusUnauthorized)
 	WriteJSONResponse(w, JSONResponse{
 		Status:  http.StatusUnauthorized,
