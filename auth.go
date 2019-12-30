@@ -4,10 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
 )
+
+// TODO: Refresh token (on every request or separate endpoint?)
 
 // TODO: get the secret from .env
 const secret = "my_secret_key"
@@ -34,6 +37,120 @@ type Claims struct {
 	jwt.StandardClaims
 }
 
+// AuthHandler requires an authenticated user to handle the request
+type AuthHandler struct {
+	Callback func(handler AuthHandler)
+	Response http.ResponseWriter
+	Request  *http.Request
+	Token    *string
+}
+
+// MaybeAuthHandler checks for authentication but does not quit if unauthorized
+type MaybeAuthHandler struct {
+	Callback   func(handler MaybeAuthHandler)
+	Response   http.ResponseWriter
+	Request    *http.Request
+	authorized bool
+	Token      *string
+}
+
+func (handler AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	header, ok := r.Header["Authorization"]
+
+	if !ok {
+		// header is missing
+		WriteUnauthorized(w)
+		return
+	}
+
+	re, err := regexp.Compile(`(?i:Bearer)\s+(.*)`)
+
+	if err != nil {
+		WriteJSONResponse(w, JSONResponse{
+			Status:  http.StatusInternalServerError,
+			Message: "Internal server error",
+		})
+		return
+	}
+
+	matches := re.FindStringSubmatch(header[0])
+
+	if matches == nil {
+		WriteJSONResponse(w, JSONResponse{
+			Status:  http.StatusBadRequest,
+			Message: "Malformed authorization header",
+		})
+		return
+	}
+
+	valid, err := ValidateJWT(w, matches[0])
+
+	if err != nil || !valid {
+		WriteUnauthorized(w)
+		return
+	}
+
+	handler.Response = w
+	handler.Request = r
+	handler.Callback(handler)
+}
+
+func (handler MaybeAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	header, ok := r.Header["Authorization"]
+	handler.authorized = false
+
+	if ok {
+		re, err := regexp.Compile(`(?i:Bearer)\s+(.*)`)
+
+		if err != nil {
+			WriteJSONResponse(w, JSONResponse{
+				Status:  http.StatusInternalServerError,
+				Message: "Internal server error",
+			})
+			return
+		}
+
+		matches := re.FindStringSubmatch(header[0])
+
+		if matches != nil {
+			valid, err := ValidateJWT(w, matches[1])
+
+			if err == nil && valid {
+				handler.authorized = true
+			}
+		}
+	}
+
+	handler.Response = w
+	handler.Request = r
+	handler.Callback(handler)
+}
+
+// CheckAuth checks if authorized and sends message
+func (handler MaybeAuthHandler) CheckAuth() bool {
+	if handler.authorized {
+		return true
+	}
+
+	WriteUnauthorized(handler.Response)
+	return false
+}
+
+// GenerateToken generates a JWT token with username and expiration as payload
+func GenerateToken(username string) (string, error) {
+	// TODO: get expiration time from .env
+	expirationTime := time.Now().Add(60 * time.Minute)
+	claims := &Claims{
+		Username: username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(jwtKey)
+}
+
 // SigninHandler is the default auth handler which generates a JWT when user and password match
 var SigninHandler = PlainHandler{
 	Callback: func(handler PlainHandler) {
@@ -53,17 +170,7 @@ var SigninHandler = PlainHandler{
 			return
 		}
 
-		// TODO: get expiration time from .env
-		expirationTime := time.Now().Add(60 * time.Minute)
-		claims := &Claims{
-			Username: creds.Username,
-			StandardClaims: jwt.StandardClaims{
-				ExpiresAt: expirationTime.Unix(),
-			},
-		}
-
-		token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-		tokenString, err := token.SignedString(jwtKey)
+		tokenString, err := GenerateToken(creds.Username)
 
 		if err != nil {
 			WriteJSONResponse(handler.Response, JSONResponse{

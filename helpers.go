@@ -7,8 +7,8 @@ import (
 
 // JSONResponse is a generic response that can be marshalled for output
 type JSONResponse struct {
-	Status  int    `json:"status"`
-	Message string `json:"message"`
+	Status  int         `json:"status"`
+	Message interface{} `json:"message"`
 }
 
 // WriteUnauthorized writes the unauthorized status to the browser
