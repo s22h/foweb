@@ -12,18 +12,14 @@ import (
 
 // TODO: Refresh token (on every request or separate endpoint?)
 
-// TODO: get the secret from .env
-const secret = "my_secret_key"
+var secret *string = nil
 
-var jwtKey = []byte(secret)
-
-// SigninCallback is the callback function used to check the given credentials with the backend (database, user file etc.)
-var SigninCallback SigninCallbackFunc = func(creds Credentials) bool {
+var validationCallback ValidationFunc = func(creds Credentials) bool {
 	return false
 }
 
-// SigninCallbackFunc is the expected type of the SigninCallback function
-type SigninCallbackFunc func(creds Credentials) bool
+// ValidationFunc is the expected type of the validation callback
+type ValidationFunc func(creds Credentials) bool
 
 // Credentials is the default credentials struct
 type Credentials struct {
@@ -52,6 +48,15 @@ type MaybeAuthHandler struct {
 	Request    *http.Request
 	authorized bool
 	Token      *string
+}
+
+// SetValidationCallback sets the validation callback for the signin process
+func SetValidationCallback(f ValidationFunc) {
+	validationCallback = f
+}
+
+func SetSecret(s string) {
+	secret = &s
 }
 
 func (handler AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -83,7 +88,7 @@ func (handler AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	valid, err := ValidateJWT(w, matches[0])
+	valid, err := ValidateJWT(matches[1])
 
 	if err != nil || !valid {
 		WriteUnauthorized(w)
@@ -113,7 +118,7 @@ func (handler MaybeAuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request
 		matches := re.FindStringSubmatch(header[0])
 
 		if matches != nil {
-			valid, err := ValidateJWT(w, matches[1])
+			valid, err := ValidateJWT(matches[1])
 
 			if err == nil && valid {
 				handler.authorized = true
@@ -138,6 +143,10 @@ func (handler MaybeAuthHandler) CheckAuth() bool {
 
 // GenerateToken generates a JWT token with username and expiration as payload
 func GenerateToken(username string) (string, error) {
+	if secret == nil {
+		return "", errors.New("Secret not set")
+	}
+
 	// TODO: get expiration time from .env
 	expirationTime := time.Now().Add(60 * time.Minute)
 	claims := &Claims{
@@ -148,7 +157,7 @@ func GenerateToken(username string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString(jwtKey)
+	return token.SignedString([]byte(*secret))
 }
 
 // SigninHandler is the default auth handler which generates a JWT when user and password match
@@ -165,7 +174,7 @@ var SigninHandler = PlainHandler{
 			return
 		}
 
-		if !SigninCallback(creds) {
+		if !validationCallback(creds) {
 			WriteUnauthorized(handler.Response)
 			return
 		}
@@ -185,11 +194,15 @@ var SigninHandler = PlainHandler{
 }
 
 // ValidateJWT validates the given token string and returns true if valid, false otherwise
-func ValidateJWT(w http.ResponseWriter, token string) (bool, error) {
+func ValidateJWT(token string) (bool, error) {
+	if secret == nil {
+		return false, errors.New("Secret not set")
+	}
+
 	claims := &Claims{}
 
 	t, err := jwt.ParseWithClaims(token, claims, func(token *jwt.Token) (interface{}, error) {
-		return jwtKey, nil
+		return []byte(*secret), nil
 	})
 
 	if err != nil {
